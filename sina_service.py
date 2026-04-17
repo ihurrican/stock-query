@@ -209,7 +209,7 @@ class StockSinaService:
         print(f"实际获取股票数量: {len(stock_list)}")
         end_time = time.time()
         print(f"耗时: {end_time - start_time:.2f} 秒")
-        return stock_list[:1]
+        return stock_list
 
     # ==================== 历史 K 线数据 ====================
 
@@ -244,7 +244,6 @@ class StockSinaService:
         """
         url = (f"{self.base_url}CN_MarketData.getKLineData"
                f"?symbol={symbol}&scale={scale}&ma={scale}&datalen={datalen}")
-        print(f"Fetching stock history data from URL: {url}")
         data = self.http_get(url)
         if not data or data == 'null':
             print(f"No data returned for {symbol} with scale {scale}")
