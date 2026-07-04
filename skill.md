@@ -24,6 +24,7 @@
 - ✅ 绘制股票 K 线蜡烛图
 - ✅ 评估某只股票是否值得买入（多策略评分）
 - ✅ 批量筛选符合条件的推荐股票（按得分排序）
+- ✅ 批量导出股票周K线数据到Excel文件
 
 ---
 
@@ -191,7 +192,26 @@ suggestions = sina.stock_suggestion(top=20, score=50, risk='aggressive', strateg
 }
 ```
 
-### 功能六：获取建议列表（命令行）
+### 功能六：批量导出周K线数据到Excel
+
+```python
+from stock_service import StockServiceCLI
+
+cli = StockServiceCLI()
+# 从 data.txt 读取股票代码，导出近一年周K线到Excel
+cli._handle_export(weeks=55, datadir='data.txt')
+```
+
+每只股票生成一个 Excel 文件，包含字段：
+
+| 字段 | 说明 |
+|------|------|
+| day | 日期 |
+| open/high/low/close | 开盘价/最高价/最低价/收盘价 |
+| volume | 成交量 |
+| direction | 涨跌方向：1上涨, -1下跌, 0持平/首行 |
+
+### 功能七：获取建议列表（命令行）
 
 ```bash
 # 获取前 10 只推荐股票（得分 >= 60）
@@ -266,6 +286,12 @@ python stock_service.py --score sh600000 --strategy all --risk balanced
 # 批量筛选推荐股票
 python stock_service.py --suggest
 python stock_service.py --suggest --top 20 --score 70 --risk conservative
+
+# 导出周K线数据到Excel（从data.txt读取股票代码，默认55周约一年）
+python stock_service.py --export
+
+# 指定导出周数和数据文件
+python stock_service.py --export --weeks 30 --datadir data.txt
 ```
 
 ---

@@ -1190,3 +1190,117 @@ class StockSinaService:
         print(f"评估完成，符合条件的股票: {len(suggestions)}")
         return sorted_suggestions[:top]
 
+    def get_multi_stock_history_to_xlsx(self, symbols, scale=240, datalen=1024,
+                                         output_file=None, max_workers=10):
+        """
+        批量获取多只股票的历史 K 线数据并保存到本地 xlsx 文件。
+
+        使用线程池并发拉取，每只股票作为一个独立的 sheet 存入 Excel，
+        同时自动生成一个汇总 sheet（summary）罗列每只股票的基本信息。
+
+        如果某只股票获取失败，summary 中会标记错误信息，不会阻断整体流程。
+
+        Args:
+            symbols     (list[str]): 股票代码列表，支持带交易所前缀的完整 symbol，
+                                     如 ["sh600000", "sz000001", "bj830799"]
+            scale       (int)      : K 线周期（分钟），可选值：
+                                     - 5    : 5 分钟线
+                                     - 15   : 15 分钟线
+                                     - 30   : 30 分钟线
+                                     - 60   : 60 分钟线
+                                     - 240  : 日线（默认）
+                                     - 1200 : 周线
+                                     - 7200 : 月线
+            datalen     (int)      : 每只股票返回的数据条数，范围 1~1024，默认 1024
+            output_file (str|None) : 输出 xlsx 文件路径。为 None 时自动生成文件名
+                                     "multi_stock_history_{scale}min_{datalen}len.xlsx"
+            max_workers (int)      : 并发线程数，默认 10
+
+        Returns:
+            str: 保存的 xlsx 文件路径
+        """
+        if output_file is None:
+            output_file = f"multi_stock_history_{scale}min_{datalen}len.xlsx"
+
+        total = len(symbols)
+        print(f"正在批量获取 {total} 只股票的历史数据（scale={scale}, datalen={datalen}）...")
+
+        results = {}
+
+        def fetch_one(sym):
+            try:
+                data = self.get_stock_history_data(sym, scale=scale, datalen=datalen)
+                if data:
+                    df = pd.DataFrame(data)
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col])
+                    if 'day' in df.columns:
+                        df['day'] = pd.to_datetime(df['day'])
+                        df.sort_values('day', inplace=True)
+                    return sym, df
+                else:
+                    return sym, None
+            except Exception as e:
+                print(f"  {sym} 获取失败: {e}")
+                return sym, None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_one, sym): sym for sym in symbols}
+            done = 0
+            for future in concurrent.futures.as_completed(futures):
+                sym = futures[future]
+                try:
+                    sym, df = future.result()
+                    results[sym] = df
+                except Exception as e:
+                    results[sym] = None
+                    print(f"  {sym} 处理异常: {e}")
+                done += 1
+                if done % max(1, total // 10) == 0 or done == total:
+                    print(f"  进度: {done}/{total}")
+
+        print(f"数据获取完成，成功: {sum(1 for v in results.values() if v is not None)}/{total}")
+
+        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+            summary_rows = []
+            for sym in symbols:
+                df = results.get(sym)
+                if df is not None and not df.empty:
+                    df.to_excel(writer, sheet_name=self._safe_sheet_name(sym), index=False)
+                    summary_rows.append({
+                        'symbol': sym,
+                        'records': len(df),
+                        'start_date': df['day'].iloc[0] if 'day' in df.columns else '',
+                        'end_date': df['day'].iloc[-1] if 'day' in df.columns else '',
+                        'latest_close': df['close'].iloc[-1] if 'close' in df.columns else '',
+                        'status': 'OK'
+                    })
+                else:
+                    summary_rows.append({
+                        'symbol': sym,
+                        'records': 0,
+                        'start_date': '',
+                        'end_date': '',
+                        'latest_close': '',
+                        'status': 'FAILED'
+                    })
+            summary_df = pd.DataFrame(summary_rows)
+            summary_df.to_excel(writer, sheet_name='summary', index=False)
+
+        print(f"数据已保存到: {output_file}")
+        return output_file
+
+    @staticmethod
+    def _safe_sheet_name(name):
+        """
+        将非法 sheet 名称转为 Excel 允许的格式。
+
+        Excel sheet 名称限制：长度 <= 31，不允许 \\ / ? * [ ] :
+        """
+        safe = name.replace('/', '_').replace('\\', '_') \
+                   .replace('?', '_').replace('*', '_') \
+                   .replace('[', '(').replace(']', ')') \
+                   .replace(':', '_')
+        return safe[:31]
+

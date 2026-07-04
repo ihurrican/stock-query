@@ -1,7 +1,11 @@
+import os
 import sys
 import io
 import argparse
+from datetime import datetime
 from typing import Optional, Dict, Any, List
+import pandas as pd
+import numpy as np
 from sina_service import StockSinaService
 
 __version__ = '1.0.1'
@@ -125,6 +129,44 @@ class StockServiceCLI:
             print(f'{i}. {stock["symbol"]} 得分:{stock["score"]:.1f} '
                   f'决策:{stock["decision"]} 当前价:{stock["current_price"]}')
     
+    def _handle_export(self, weeks: int, datadir: str):
+        codes = []
+        with open(datadir, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    codes.append(line.split()[-1].strip())
+
+        if not codes:
+            print(f'{datadir} 中没有找到股票代码')
+            return
+
+        dir_name = datetime.now().strftime('%Y%m%d_%H%M%S')
+        os.makedirs(dir_name, exist_ok=True)
+        print(f'输出目录: {dir_name}')
+
+        for code in codes:
+            print(f'正在获取 {code} 的周K线数据...')
+            data = self.sina.get_stock_history_data_bycode(code, scale=1200, datalen=weeks)
+            if not data:
+                print(f'  {code}: 无数据')
+                continue
+
+            df = pd.DataFrame(data)
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['day'] = pd.to_datetime(df['day'])
+            df.sort_values('day', inplace=True)
+
+            diff = df['close'].diff()
+            df['direction'] = np.select([diff > 0, diff < 0], [1, -1], default=0)
+
+            file_path = os.path.join(dir_name, f'{code}.xlsx')
+            df.to_excel(file_path, index=False)
+            print(f'  {code}: {len(df)} 条记录 -> {file_path}')
+
+        print('完成')
+
     def run(self, args):
         """运行命令行接口"""
         # 验证数据长度参数
@@ -139,6 +181,7 @@ class StockServiceCLI:
             'score': lambda: self._handle_score(args.score, args.strategy, args.risk),
             'code': lambda: self._handle_code(args.code, args.scale, datalen),
             'suggest': lambda: self._handle_suggest(args.top, args.risk, args.strategy),
+            'export': lambda: self._handle_export(args.weeks, args.datadir),
         }
         
         # 查找并执行对应的处理函数
@@ -192,6 +235,7 @@ class StockServiceCLI:
         action_group.add_argument('--score', metavar='SYMBOL', help='买入评估评分')
         action_group.add_argument('--code', metavar='CODE', help='根据纯数字代码查询 (自动匹配交易所)')
         action_group.add_argument('--suggest', action='store_true', help='获取推荐股票列表 (批量筛选)')
+        action_group.add_argument('--export', action='store_true', help='批量导出周K线数据到Excel')
         
         # 通用参数
         parser.add_argument('--top', type=int, default=10, 
@@ -205,6 +249,10 @@ class StockServiceCLI:
                           default='all', help='评分策略 (默认: all)')
         parser.add_argument('--risk', choices=['conservative', 'balanced', 'aggressive'],
                           default='balanced', help='风险偏好 (默认: balanced)')
+        parser.add_argument('--weeks', type=int, default=55,
+                          help='导出周K线数据条数 (默认: 55，约一年)')
+        parser.add_argument('--datadir', type=str, default='data.txt',
+                          help='股票代码文件路径 (默认: data.txt)')
         
         return parser
 
